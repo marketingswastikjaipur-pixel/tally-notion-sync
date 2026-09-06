@@ -79,8 +79,17 @@ def get_local_ip():
 
 
 @app.route('/')
+@app.route('/api/index')
+@app.route('/api/index.py')
 def index():
     return render_template('index.html')
+
+
+@app.route('/static/<path:filename>')
+def custom_static(filename):
+    static_dir = os.path.join(BASE_DIR, 'static')
+    return send_from_directory(static_dir, filename)
+
 
 
 @app.route('/api/records', methods=['GET'])
