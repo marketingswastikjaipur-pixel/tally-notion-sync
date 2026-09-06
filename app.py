@@ -3,19 +3,39 @@ import io
 import time
 import socket
 import base64
+import tempfile
 import qrcode
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 import notion_service
 import ocr_parser
 
-app = Flask(__name__)
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+
+# On Vercel / serverless cloud, the root filesystem is read-only, use temp directory
+if os.environ.get('VERCEL') or not os.access(BASE_DIR, os.W_OK):
+    UPLOAD_DIR = os.path.join(tempfile.gettempdir(), 'uploads')
+else:
+    UPLOAD_DIR = os.path.join(BASE_DIR, 'uploads')
+
+try:
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+except Exception as e:
+    print(f"Warning creating upload dir: {e}")
+
+# Initialize Flask with explicit template & static folders for serverless runtimes
+app = Flask(
+    __name__,
+    template_folder=os.path.join(BASE_DIR, 'templates'),
+    static_folder=os.path.join(BASE_DIR, 'static')
+)
 app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024  # 32 MB max upload
 
-BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-UPLOAD_DIR = os.path.join(BASE_DIR, 'uploads')
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # In-memory database cache for snappy matching
 DB_CACHE = {
