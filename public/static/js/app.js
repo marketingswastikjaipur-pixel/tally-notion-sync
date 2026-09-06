@@ -137,22 +137,50 @@ document.addEventListener('DOMContentLoaded', () => {
                 elements.refreshIcon.classList.add('spin-icon');
             }
             const res = await fetch(`/api/records?refresh=${forceRefresh}`);
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+            }
             const data = await res.json();
             if (data.success) {
-                state.records = data.records;
+                state.records = data.records || [];
                 updateStats(data);
                 renderTable();
             } else {
                 console.error("Failed to load records:", data.error);
+                elements.tableBody.innerHTML = `
+                    <tr>
+                        <td colspan="7" class="text-center py-6 text-danger">
+                            <i data-lucide="alert-triangle"></i> Notion Error: ${escapeHtml(data.error || 'Failed to fetch database')}
+                            <div style="margin-top: 8px;">
+                                <button class="btn btn-sm btn-glass" id="btnRetryLoad"><i data-lucide="refresh-cw"></i> Retry</button>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+                if (window.lucide) lucide.createIcons();
+                document.getElementById('btnRetryLoad')?.addEventListener('click', () => loadRecords(true));
             }
         } catch (err) {
             console.error("Error fetching Notion records:", err);
+            elements.tableBody.innerHTML = `
+                <tr>
+                    <td colspan="7" class="text-center py-6 text-danger">
+                        <i data-lucide="wifi-off"></i> Failed to connect to Notion API (${escapeHtml(err.message)})
+                        <div style="margin-top: 8px;">
+                            <button class="btn btn-sm btn-glass" id="btnRetryLoad"><i data-lucide="refresh-cw"></i> Retry</button>
+                        </div>
+                    </td>
+                </tr>
+            `;
+            if (window.lucide) lucide.createIcons();
+            document.getElementById('btnRetryLoad')?.addEventListener('click', () => loadRecords(true));
         } finally {
             if (elements.refreshIcon) {
                 setTimeout(() => elements.refreshIcon.classList.remove('spin-icon'), 500);
             }
         }
     }
+
 
     function updateStats(data) {
         elements.statTotal.textContent = data.count || 0;
