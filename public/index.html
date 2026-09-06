@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Tally Voucher OCR & Notion Sync</title>
+    <meta name="description" content="Snap sales and B2C vouchers to auto-recognize customer name, invoice number, amount, match with Notion database, mark verified, and attach photo into side peek.">
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Tesseract.js for Client-Side WASM OCR -->
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    
+    <!-- Custom Stylesheet -->
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="app-wrapper">
+        <!-- Top Navbar -->
+        <header class="navbar">
+            <div class="nav-brand">
+                <div class="logo-icon">
+                    <i data-lucide="receipt-text"></i>
+                </div>
+                <div>
+                    <h1 class="nav-title">Tally Voucher <span class="gradient-text">Notion Sync</span></h1>
+                    <div class="nav-subtitle">Smart OCR & Automated Database Reconciliation</div>
+                </div>
+            </div>
+
+            <div class="nav-actions">
+                <div class="db-status-pill" id="dbStatusPill" title="Connected to Notion Database: TALLY SALES TO NOTION">
+                    <span class="status-dot"></span>
+                    <span class="status-label">Notion Connected</span>
+                </div>
+
+                <button class="btn btn-glass" id="btnMobileQr" title="Scan QR Code to open on mobile phone">
+                    <i data-lucide="smartphone"></i>
+                    <span>Mobile Link</span>
+                </button>
+
+                <button class="btn btn-icon" id="btnRefreshDb" title="Refresh Notion Database records">
+                    <i data-lucide="refresh-cw" id="refreshIcon"></i>
+                </button>
+            </div>
+        </header>
+
+        <!-- Stats Overview Bar -->
+        <section class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-icon icon-blue">
+                    <i data-lucide="database"></i>
+                </div>
+                <div class="stat-info">
+                    <span class="stat-value" id="statTotal">0</span>
+                    <span class="stat-label">Total Vouchers</span>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-icon icon-emerald">
+                    <i data-lucide="check-check"></i>
+                </div>
+                <div class="stat-info">
+                    <span class="stat-value text-emerald" id="statReconciled">0</span>
+                    <span class="stat-label">Reconciled (RCG: True)</span>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-icon icon-amber">
+                    <i data-lucide="clock"></i>
+                </div>
+                <div class="stat-info">
+                    <span class="stat-value text-amber" id="statPending">0</span>
+                    <span class="stat-label">Pending Verification</span>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-icon icon-violet">
+                    <i data-lucide="sparkles"></i>
+                </div>
+                <div class="stat-info">
+                    <div class="toggle-wrapper">
+                        <label class="switch">
+                            <input type="checkbox" id="toggleAutoSync" checked>
+                            <span class="slider round"></span>
+                        </label>
+                        <span class="stat-label font-bold">Auto-Sync on High Match</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Main Workspace: Split into Scanner/OCR and Notion Match Card -->
+        <main class="workspace-grid">
+            <!-- Left Panel: Camera & Photo Capture & OCR -->
+            <section class="panel panel-scanner">
+                <div class="panel-header">
+                    <div class="panel-title">
+                        <i data-lucide="camera" class="text-violet"></i>
+                        <h2>Voucher Capture & OCR</h2>
+                    </div>
+                    <div class="panel-badges">
+                        <span class="badge badge-purple" id="ocrEngineBadge">Tesseract 5.0 WASM</span>
+                    </div>
+                </div>
+
+                <!-- Input Controls Area -->
+                <div class="capture-actions">
+                    <label class="btn btn-primary btn-camera" for="cameraFileInput">
+                        <i data-lucide="camera"></i>
+                        <span>Snap Photo (Phone Camera)</span>
+                    </label>
+                    <input type="file" id="cameraFileInput" accept="image/*" capture="environment" class="hidden-input">
+
+                    <label class="btn btn-glass" for="fileUploadInput">
+                        <i data-lucide="upload"></i>
+                        <span>Upload / Gallery</span>
+                    </label>
+                    <input type="file" id="fileUploadInput" accept="image/*" class="hidden-input">
+
+                    <button class="btn btn-glass" id="btnWebcamToggle">
+                        <i data-lucide="video"></i>
+                        <span>Live Cam</span>
+                    </button>
+                </div>
+
+                <!-- Drag & Drop Zone / Live Video / Image Canvas Preview -->
+                <div class="dropzone" id="dropzone">
+                    <div class="dropzone-empty" id="dropzoneEmpty">
+                        <div class="drop-icon">
+                            <i data-lucide="image-up"></i>
+                        </div>
+                        <h3>Take a photo or drag & drop voucher here</h3>
+                        <p>Supports Sales Vouchers, B2C Tax Invoices, Receipts (JPG, PNG, WebP)</p>
+                        <span class="paste-hint">💡 Tip: You can also paste an image directly with <b>Ctrl + V</b></span>
+                    </div>
+
+                    <!-- Live Video Scanner View -->
+                    <div class="video-container" id="videoContainer" style="display: none;">
+                        <video id="webcamVideo" autoplay playsinline></video>
+                        <div class="video-overlay">
+                            <div class="scan-frame">
+                                <div class="scan-laser"></div>
+                            </div>
+                        </div>
+                        <button class="btn btn-primary btn-capture" id="btnTakeSnapshot">
+                            <i data-lucide="aperture"></i> Capture Voucher
+                        </button>
+                    </div>
+
+                    <!-- Image Preview & Tools -->
+                    <div class="preview-container" id="previewContainer" style="display: none;">
+                        <img id="imagePreview" alt="Voucher Preview" />
+                        <div class="image-tools">
+                            <button class="tool-btn" id="btnRotateLeft" title="Rotate Left 90°">
+                                <i data-lucide="rotate-ccw"></i>
+                            </button>
+                            <button class="tool-btn" id="btnRotateRight" title="Rotate Right 90°">
+                                <i data-lucide="rotate-cw"></i>
+                            </button>
+                            <button class="tool-btn" id="btnReOCR" title="Re-run OCR Extraction">
+                                <i data-lucide="scan-text"></i> Re-Scan
+                            </button>
+                            <button class="tool-btn text-danger" id="btnClearImage" title="Clear Image">
+                                <i data-lucide="trash-2"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- OCR Progress Bar -->
+                <div class="ocr-progress-container" id="ocrProgressContainer" style="display: none;">
+                    <div class="ocr-progress-label">
+                        <span id="ocrStatusText">Recognizing text on voucher...</span>
+                        <span id="ocrPercentText">0%</span>
+                    </div>
+                    <div class="progress-bar-bg">
+                        <div class="progress-bar-fill" id="ocrProgressBar" style="width: 0%;"></div>
+                    </div>
+                </div>
+
+                <!-- Extracted Fields Card (Interactive / Editable) -->
+                <div class="card extracted-card" id="extractedCard">
+                    <div class="card-header">
+                        <div class="card-title">
+                            <i data-lucide="file-check-2" class="text-emerald"></i>
+                            <h3>Recognized Voucher Details</h3>
+                        </div>
+                        <span class="badge badge-subtle" id="extractConfidenceBadge">Ready</span>
+                    </div>
+
+                    <div class="extracted-fields-grid">
+                        <div class="field-group">
+                            <label><i data-lucide="hash"></i> Invoice Number</label>
+                            <input type="text" id="inputInvoiceNo" placeholder="e.g. SM/26-27/1307" />
+                        </div>
+
+                        <div class="field-group">
+                            <label><i data-lucide="indian-rupee"></i> Amount (₹)</label>
+                            <input type="number" step="0.01" id="inputAmount" placeholder="e.g. 10130" />
+                        </div>
+
+                        <div class="field-group">
+                            <label><i data-lucide="calendar"></i> Invoice Date</label>
+                            <input type="text" id="inputDate" placeholder="e.g. 2026-09-06" />
+                        </div>
+
+                        <div class="field-group">
+                            <label><i data-lucide="building"></i> Customer / Party Name</label>
+                            <input type="text" id="inputCustomerName" placeholder="e.g. Triveni Enterprises" />
+                        </div>
+                    </div>
+
+
+                    <!-- Collapsible Raw OCR Text -->
+                    <details class="raw-text-details">
+                        <summary><i data-lucide="file-text"></i> View Raw OCR Output</summary>
+                        <textarea id="rawOcrText" readonly rows="4" placeholder="Raw OCR text will appear here..."></textarea>
+                    </details>
+                </div>
+            </section>
+
+            <!-- Right Panel: Notion Match & Instant Reconciliation Sync -->
+            <section class="panel panel-match">
+                <div class="panel-header">
+                    <div class="panel-title">
+                        <i data-lucide="git-compare" class="text-emerald"></i>
+                        <h2>Notion Match & Sync</h2>
+                    </div>
+                    <div class="panel-badges">
+                        <span class="badge" id="matchStatusBadge">Waiting for scan</span>
+                    </div>
+                </div>
+
+                <!-- Match Results Container -->
+                <div class="match-results-wrapper" id="matchResultsWrapper">
+                    <!-- Default Idle State -->
+                    <div class="match-idle" id="matchIdle">
+                        <div class="idle-icon">
+                            <i data-lucide="search-check"></i>
+                        </div>
+                        <h3>No voucher processed yet</h3>
+                        <p>Snap a photo or upload a voucher on the left to find its matching row in the Notion database.</p>
+                    </div>
+
+                    <!-- Active Match Card -->
+                    <div class="match-card" id="matchCard" style="display: none;">
+                        <div class="match-card-top">
+                            <div class="confidence-display">
+                                <div class="score-circle" id="scoreCircle">
+                                    <span id="scoreText">0%</span>
+                                </div>
+                                <div>
+                                    <h3 id="matchHeading">Match Found</h3>
+                                    <p class="match-sub" id="matchSub">Comparing against Notion database records</p>
+                                </div>
+                            </div>
+                            <span class="badge" id="cardConfidenceBadge">98% Match</span>
+                        </div>
+
+                        <!-- Side by Side Match Comparison -->
+                        <div class="comparison-grid">
+                            <div class="comparison-row" id="cmpInvoiceRow">
+                                <div class="cmp-label">Invoice No.</div>
+                                <div class="cmp-scanned" id="cmpScannedInv">-</div>
+                                <div class="cmp-icon" id="cmpInvIcon"><i data-lucide="check"></i></div>
+                                <div class="cmp-notion" id="cmpNotionInv">-</div>
+                            </div>
+
+                            <div class="comparison-row" id="cmpAmountRow">
+                                <div class="cmp-label">Amount (₹)</div>
+                                <div class="cmp-scanned" id="cmpScannedAmt">-</div>
+                                <div class="cmp-icon" id="cmpAmtIcon"><i data-lucide="check"></i></div>
+                                <div class="cmp-notion" id="cmpNotionAmt">-</div>
+                            </div>
+
+                            <div class="comparison-row" id="cmpDateRow">
+                                <div class="cmp-label">Date</div>
+                                <div class="cmp-scanned" id="cmpScannedDate">-</div>
+                                <div class="cmp-icon" id="cmpDateIcon"><i data-lucide="check"></i></div>
+                                <div class="cmp-notion" id="cmpNotionDate">-</div>
+                            </div>
+
+                            <div class="comparison-row" id="cmpCustomerRow">
+                                <div class="cmp-label">Customer</div>
+                                <div class="cmp-scanned" id="cmpScannedCust">-</div>
+                                <div class="cmp-icon" id="cmpCustIcon"><i data-lucide="check"></i></div>
+                                <div class="cmp-notion" id="cmpNotionCust">-</div>
+                            </div>
+
+                        </div>
+
+                        <!-- Target Notion Row Metadata Summary -->
+                        <div class="notion-target-info">
+                            <div class="target-title">
+                                <i data-lucide="table"></i>
+                                <span>Target Notion Row:</span>
+                                <strong id="targetCustomerTitle">-</strong>
+                            </div>
+                            <div class="target-meta">
+                                <span><b>Current RCG:</b> <span id="targetCurrentRcg" class="badge badge-amber">False</span></span>
+                                <span><b>Date:</b> <span id="targetDate">-</span></span>
+                            </div>
+                        </div>
+
+                        <!-- Sync Action Bar -->
+                        <div class="sync-actions">
+                            <button class="btn btn-sync" id="btnSyncNotion">
+                                <i data-lucide="upload-cloud"></i>
+                                <span id="btnSyncText">Mark RCG & Upload Photo to Notion</span>
+                            </button>
+                            <a href="#" target="_blank" class="btn btn-glass btn-notion-link" id="btnOpenNotion" style="display: none;">
+                                <i data-lucide="external-link"></i>
+                                <span>Open in Notion Side Peek</span>
+                            </a>
+                        </div>
+
+                        <!-- Sync Status Alert Box -->
+                        <div class="sync-status-box" id="syncStatusBox" style="display: none;">
+                            <i data-lucide="check-circle" id="syncStatusIcon"></i>
+                            <div id="syncStatusMessage">
+                                <strong>Success!</strong> Row updated in Notion with verified status and voucher photo embedded.
+                            </div>
+                        </div>
+
+                        <!-- Other Matching Candidates (If Any) -->
+                        <div class="candidate-matches" id="candidatesSection" style="display: none;">
+                            <h4><i data-lucide="layers"></i> Other Potential Matches</h4>
+                            <div class="candidates-list" id="candidatesList"></div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Live Notion Database Explorer -->
+        <section class="database-section">
+            <div class="section-header">
+                <div class="section-title">
+                    <i data-lucide="layout-grid" class="text-blue"></i>
+                    <h2>Notion Database: <code>TALLY SALES TO NOTION</code></h2>
+                </div>
+
+                <div class="table-controls">
+                    <div class="search-input-wrapper">
+                        <i data-lucide="search"></i>
+                        <input type="text" id="tableSearchInput" placeholder="Search by customer, invoice no, amount..." />
+                    </div>
+
+                    <div class="filter-tabs">
+                        <button class="tab-btn active" data-filter="all">All (<span id="countAll">0</span>)</button>
+                        <button class="tab-btn" data-filter="pending">Pending (<span id="countPending">0</span>)</button>
+                        <button class="tab-btn" data-filter="reconciled">Reconciled (<span id="countReconciled">0</span>)</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="table-wrapper">
+                <table class="data-table" id="recordsTable">
+                    <thead>
+                        <tr>
+                            <th>Status (RCG)</th>
+                            <th>Customer Name</th>
+                            <th>Invoice No.</th>
+                            <th>Amount (₹)</th>
+                            <th>Date</th>
+                            <th>Remarks</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody">
+                        <tr>
+                            <td colspan="7" class="text-center py-6">
+                                <div class="loading-spinner"></div> Loading Notion records...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Footer -->
+        <footer class="app-footer">
+            <div>Tally Voucher OCR & Notion Auto-Reconciliation App &bull; Deep Integration with Notion API</div>
+            <div>Built for fast mobile voucher capture & Tally sales tracking</div>
+        </footer>
+    </div>
+
+    <!-- Mobile QR Code Modal -->
+    <div class="modal-backdrop" id="qrModal" style="display: none;">
+        <div class="modal-card">
+            <div class="modal-header">
+                <div class="modal-title">
+                    <i data-lucide="smartphone" class="text-emerald"></i>
+                    <h3>Open on Mobile Phone</h3>
+                </div>
+                <button class="modal-close" id="btnCloseQrModal">&times;</button>
+            </div>
+            <div class="modal-body text-center">
+                <p>Scan this QR Code with your phone's camera app to open this scanner on your mobile device instantly:</p>
+                <div class="qr-image-wrapper">
+                    <img id="qrImage" src="" alt="Mobile QR Code" />
+                </div>
+                <div class="mobile-url-box">
+                    <span id="mobileUrlText">http://192.168.1.5:5000</span>
+                    <button class="btn btn-sm btn-glass" id="btnCopyMobileUrl" title="Copy URL">
+                        <i data-lucide="copy"></i> Copy
+                    </button>
+                </div>
+                <small class="text-muted">Ensure your phone is connected to the same Wi-Fi network.</small>
+            </div>
+        </div>
+    </div>
+
+    <!-- Audio Effects for Professional UX -->
+    <audio id="audioSuccess" preload="auto" src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3"></audio>
+    <audio id="audioScan" preload="auto" src="https://assets.mixkit.co/active_storage/sfx/2874/2874-preview.mp3"></audio>
+
+    <!-- Custom App JavaScript -->
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
