@@ -1,42 +1,28 @@
 import sys
 import os
+import json
 
-# Add root folder to sys.path
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
 
 from app import app
+from flask import jsonify, request
 
-# WSGI Middleware to reliably resolve the actual requested URL path on Vercel
+@app.before_request
+def check_debug():
+    if request.path == '/debug' or request.path.endswith('/debug'):
+        env_dict = {k: str(v) for k, v in request.environ.items() if not k.startswith('wsgi.')}
+        return jsonify(env_dict)
+
 class VercelPathMiddleware:
     def __init__(self, wsgi_app):
         self.wsgi_app = wsgi_app
 
     def __call__(self, environ, start_response):
-        # 1. Check for real requested URI from Vercel headers
-        actual_path = (
-            environ.get('RAW_URI') or 
-            environ.get('REQUEST_URI') or 
-            environ.get('HTTP_X_MATCHED_PATH') or 
-            environ.get('PATH_INFO') or 
-            '/'
-        )
-
-        # Strip query parameters if present
-        path = actual_path.split('?')[0]
-
-        # Strip internal function prefix if prepended
-        if path.startswith('/api/index.py'):
-            path = path[len('/api/index.py'):]
-        elif path.startswith('/api/index') and (len(path) == 10 or path[10] == '/'):
-            path = path[len('/api/index'):]
-
-        if not path or path == '':
-            path = '/'
-
-        environ['PATH_INFO'] = path
+        # Let's inspect what Vercel passes
+        path = environ.get('PATH_INFO', '')
+        # Don't overwrite PATH_INFO if it already has the path!
         return self.wsgi_app(environ, start_response)
 
-# Apply middleware
 app.wsgi_app = VercelPathMiddleware(app.wsgi_app)
