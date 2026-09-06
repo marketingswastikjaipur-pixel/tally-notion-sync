@@ -8,28 +8,35 @@ if root_dir not in sys.path:
 
 from app import app
 
-# WSGI Middleware to fix Vercel path prefixing
+# WSGI Middleware to reliably resolve the actual requested URL path on Vercel
 class VercelPathMiddleware:
     def __init__(self, wsgi_app):
         self.wsgi_app = wsgi_app
 
     def __call__(self, environ, start_response):
-        path = environ.get('PATH_INFO', '')
-        
-        # Strip /api/index.py or /api/index prefix if added by Vercel rewrites
+        # 1. Check for real requested URI from Vercel headers
+        actual_path = (
+            environ.get('RAW_URI') or 
+            environ.get('REQUEST_URI') or 
+            environ.get('HTTP_X_MATCHED_PATH') or 
+            environ.get('PATH_INFO') or 
+            '/'
+        )
+
+        # Strip query parameters if present
+        path = actual_path.split('?')[0]
+
+        # Strip internal function prefix if prepended
         if path.startswith('/api/index.py'):
             path = path[len('/api/index.py'):]
-        elif path.startswith('/api/index'):
-            # Only strip if it's the rewrite target, e.g. /api/index/api/records or /api/index
-            sub = path[len('/api/index'):]
-            if sub == '' or sub.startswith('/'):
-                path = sub
+        elif path.startswith('/api/index') and (len(path) == 10 or path[10] == '/'):
+            path = path[len('/api/index'):]
 
         if not path or path == '':
             path = '/'
-            
+
         environ['PATH_INFO'] = path
         return self.wsgi_app(environ, start_response)
 
-# Wrap Flask with path normalization middleware for Vercel
+# Apply middleware
 app.wsgi_app = VercelPathMiddleware(app.wsgi_app)
