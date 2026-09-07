@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Prchi Voucher OCR & Notion Sync</title>
+    <meta name="description" content="Snap and reconcile prchi slips by Date, Customer Name, and Price. Appends photo to Notion side peek without modifying remarks.">
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Tesseract.js for Client-Side WASM OCR -->
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    
+    <!-- Custom Stylesheet -->
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="app-wrapper">
+        <!-- Top Navbar -->
+        <header class="navbar">
+            <div class="nav-brand">
+                <div class="logo-icon">
+                    <i data-lucide="receipt"></i>
+                </div>
+                <div>
+                    <h1 class="nav-title">Prchi Voucher <span class="gradient-text">Notion Sync</span></h1>
+                    <div class="nav-subtitle">Date • Customer • Price Matching • Side Peek Photo Sync</div>
+                </div>
+            </div>
+
+            <div class="nav-actions">
+                <div class="db-status-pill" id="dbStatusPill" title="Connected to Notion Database: f6d358b9623f4b32b0cf4969cb6ebf35">
+                    <span class="status-dot"></span>
+                    <span class="status-label">PRCHI DB Connected</span>
+                </div>
+
+                <button class="btn btn-glass" id="btnMobileQr" title="Scan QR Code to open on mobile phone">
+                    <i data-lucide="smartphone"></i>
+                    <span>Mobile Link</span>
+                </button>
+
+                <button class="btn btn-icon" id="btnRefreshDb" title="Refresh Notion Database records">
+                    <i data-lucide="refresh-cw" id="refreshIcon"></i>
+                </button>
+            </div>
+        </header>
+
+        <!-- Stats Overview Bar -->
+        <section class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-icon icon-amber">
+                    <i data-lucide="clock"></i>
+                </div>
+                <div class="stat-info">
+                    <span class="stat-value text-amber" id="statPending">...</span>
+                    <span class="stat-label">Pending (PRCHI: False)</span>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-icon icon-emerald">
+                    <i data-lucide="check-circle-2"></i>
+                </div>
+                <div class="stat-info">
+                    <span class="stat-value text-emerald" id="statReconciledSession">0</span>
+                    <span class="stat-label">Reconciled in Session</span>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-icon icon-blue">
+                    <i data-lucide="database"></i>
+                </div>
+                <div class="stat-info">
+                    <span class="stat-value text-blue" id="statMatchingCriteria">Date + Cust + Price</span>
+                    <span class="stat-label">Match Algorithm</span>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-icon icon-violet">
+                    <i data-lucide="check-square"></i>
+                </div>
+                <div class="stat-info">
+                    <div class="toggle-wrapper">
+                        <label class="switch">
+                            <input type="checkbox" id="toggleMarkPrchi" checked>
+                            <span class="slider round"></span>
+                        </label>
+                        <span class="stat-label font-bold">Tick PRCHI on Reconcile</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Notice Banner -->
+        <div class="notice-banner">
+            <i data-lucide="shield-check" class="text-emerald"></i>
+            <span><strong>Safe Side-Peek Sync:</strong> Only records where <code>PRCHI = False</code> are eligible for reconcile. Photos are appended to side peek preserving existing blocks. Remarks & all other columns remain untouched.</span>
+        </div>
+
+        <!-- Main Workspace: Split into Scanner/OCR and Notion Match Card -->
+        <main class="workspace-grid">
+            <!-- Left Panel: Camera & Photo Capture & OCR -->
+            <section class="panel panel-scanner">
+                <div class="panel-header">
+                    <div class="panel-title">
+                        <i data-lucide="camera" class="text-violet"></i>
+                        <h2>Capture Prchi Slip</h2>
+                    </div>
+                    <div class="panel-badges">
+                        <span class="badge badge-purple" id="ocrEngineBadge">Tesseract 5.0 WASM</span>
+                    </div>
+                </div>
+
+                <!-- Input Controls Area -->
+                <div class="capture-actions">
+                    <label class="btn btn-primary btn-camera" for="cameraFileInput">
+                        <i data-lucide="camera"></i>
+                        <span>Snap Photo (Camera)</span>
+                    </label>
+                    <input type="file" id="cameraFileInput" accept="image/*" capture="environment" class="file-hidden">
+
+                    <label class="btn btn-glass" for="galleryFileInput">
+                        <i data-lucide="image"></i>
+                        <span>Upload File</span>
+                    </label>
+                    <input type="file" id="galleryFileInput" accept="image/*" class="file-hidden">
+
+                    <button class="btn btn-glass" id="btnBrowseDb" title="Browse all pending database rows">
+                        <i data-lucide="list"></i>
+                        <span>Browse Records</span>
+                    </button>
+                </div>
+
+                <!-- Drag & Drop / Preview Box -->
+                <div class="drop-zone" id="dropZone">
+                    <div class="drop-zone-idle" id="dropZoneIdle">
+                        <div class="drop-zone-icon">
+                            <i data-lucide="file-text"></i>
+                        </div>
+                        <p class="drop-text-primary">Snap photo or drag & drop Prchi slip here</p>
+                        <p class="drop-text-secondary">JPG, PNG, WebP supported • Automatic OCR on snap</p>
+                    </div>
+
+                    <!-- Live Image Preview -->
+                    <div class="preview-container hidden" id="previewContainer">
+                        <img id="imagePreview" alt="Prchi slip preview" class="preview-img">
+                        <div class="preview-overlay">
+                            <button class="btn-preview-action" id="btnRetake" title="Retake Photo">
+                                <i data-lucide="rotate-ccw"></i>
+                                <span>Retake</span>
+                            </button>
+                            <button class="btn-preview-action" id="btnRunOcrAgain" title="Re-run OCR">
+                                <i data-lucide="sparkles"></i>
+                                <span>Re-scan</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- OCR Progress Bar -->
+                    <div class="ocr-progress-overlay hidden" id="ocrProgressOverlay">
+                        <div class="spinner"></div>
+                        <div class="progress-info">
+                            <span class="progress-status" id="progressStatus">Analyzing Prchi Slip...</span>
+                            <div class="progress-bar-bg">
+                                <div class="progress-bar-fill" id="progressBarFill" style="width: 0%"></div>
+                            </div>
+                            <span class="progress-pct" id="progressPct">0%</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Extracted OCR Fields (Editable) -->
+                <div class="extracted-card">
+                    <div class="extracted-header">
+                        <div class="extracted-title">
+                            <i data-lucide="file-check-2" class="text-blue"></i>
+                            <span>Extracted Details (3 Match Fields)</span>
+                        </div>
+                        <button class="btn-link" id="btnManualMatch">
+                            <i data-lucide="search"></i> Match Against DB
+                        </button>
+                    </div>
+
+                    <div class="fields-grid">
+                        <div class="field-item">
+                            <label for="inputDate"><i data-lucide="calendar"></i> Date (YYYY-MM-DD)</label>
+                            <input type="text" id="inputDate" placeholder="e.g. 2026-09-07" class="input-field">
+                        </div>
+
+                        <div class="field-item">
+                            <label for="inputPrice"><i data-lucide="indian-rupee"></i> Price / Final Amount (₹)</label>
+                            <input type="number" step="any" id="inputPrice" placeholder="e.g. 600" class="input-field">
+                        </div>
+
+                        <div class="field-item field-full">
+                            <label for="inputCustomer"><i data-lucide="user"></i> Customer / Party Name</label>
+                            <input type="text" id="inputCustomer" placeholder="e.g. Baid ji a45 janta colony" class="input-field">
+                        </div>
+                    </div>
+
+                    <!-- Collapsible Raw OCR Text -->
+                    <details class="raw-ocr-details">
+                        <summary><i data-lucide="terminal"></i> View Raw OCR Text</summary>
+                        <pre class="raw-ocr-box" id="rawOcrBox">No slip scanned yet.</pre>
+                    </details>
+                </div>
+            </section>
+
+            <!-- Right Panel: Notion Match & Reconciliation Card -->
+            <section class="panel panel-match">
+                <div class="panel-header">
+                    <div class="panel-title">
+                        <i data-lucide="git-merge" class="text-emerald"></i>
+                        <h2>Notion Database Match</h2>
+                    </div>
+                    <div class="panel-badges">
+                        <span class="badge" id="matchStatusBadge">Waiting for scan</span>
+                    </div>
+                </div>
+
+                <!-- Match Results Container -->
+                <div class="match-content" id="matchContent">
+                    <!-- Idle State Placeholder -->
+                    <div class="match-idle" id="matchIdle">
+                        <div class="idle-illustration">
+                            <i data-lucide="scan-line"></i>
+                        </div>
+                        <h3>Ready for Reconciliation</h3>
+                        <p>Snap a photo of your Prchi voucher slip. The AI will extract Date, Customer Name, and Price, and find the corresponding unreconciled record (PRCHI: False).</p>
+                    </div>
+
+                    <!-- Active Match Card -->
+                    <div class="match-card hidden" id="matchCard">
+                        <!-- Top Match Header with Confidence Meter -->
+                        <div class="match-card-header">
+                            <div class="match-score-badge" id="matchScoreBadge">
+                                <span class="score-number" id="matchScoreNumber">0%</span>
+                                <span class="score-text">Match Score</span>
+                            </div>
+                            <div class="match-verdict">
+                                <h3 id="matchVerdictTitle">Top Candidate Found</h3>
+                                <p id="matchVerdictDesc">Matches Date, Price, and Customer Name</p>
+                            </div>
+                        </div>
+
+                        <!-- Match Breakdown Badges -->
+                        <div class="match-breakdown-tags">
+                            <span class="pill pill-dim" id="tagDateMatch">
+                                <i data-lucide="calendar"></i> Date: <b id="tagDateVal">-</b>
+                            </span>
+                            <span class="pill pill-dim" id="tagPriceMatch">
+                                <i data-lucide="indian-rupee"></i> Price: <b id="tagPriceVal">-</b>
+                            </span>
+                            <span class="pill pill-dim" id="tagCustomerMatch">
+                                <i data-lucide="user"></i> Customer: <b id="tagCustomerVal">-</b>
+                            </span>
+                        </div>
+
+                        <!-- Comparison Details: Extracted vs Notion Record -->
+                        <div class="comparison-table">
+                            <div class="comp-row comp-header">
+                                <span class="comp-col">Field</span>
+                                <span class="comp-col">Extracted from Slip</span>
+                                <span class="comp-col">Notion Database Row</span>
+                            </div>
+                            <div class="comp-row" id="rowDateComp">
+                                <span class="comp-col font-medium">Date</span>
+                                <span class="comp-col" id="compExtDate">-</span>
+                                <span class="comp-col font-bold" id="compDbDate">-</span>
+                            </div>
+                            <div class="comp-row" id="rowPriceComp">
+                                <span class="comp-col font-medium">Price</span>
+                                <span class="comp-col" id="compExtPrice">-</span>
+                                <span class="comp-col font-bold text-emerald" id="compDbPrice">-</span>
+                            </div>
+                            <div class="comp-row" id="rowCustomerComp">
+                                <span class="comp-col font-medium">Customer</span>
+                                <span class="comp-col" id="compExtCustomer">-</span>
+                                <span class="comp-col font-bold" id="compDbCustomer">-</span>
+                            </div>
+                            <div class="comp-row" id="rowSitesComp">
+                                <span class="comp-col font-medium">Site/Title</span>
+                                <span class="comp-col">-</span>
+                                <span class="comp-col" id="compDbSites">-</span>
+                            </div>
+                        </div>
+
+                        <!-- Side Peek Note -->
+                        <div class="sidepeek-notice">
+                            <i data-lucide="sparkles" class="text-blue"></i>
+                            <span>Photo will be added to the side peek of this row. Any existing data in the side peek is preserved. No remarks or other columns will be modified.</span>
+                        </div>
+
+                        <!-- Primary Action Buttons -->
+                        <div class="reconcile-actions">
+                            <button class="btn btn-success btn-large" id="btnConfirmReconcile">
+                                <i data-lucide="check-check"></i>
+                                <span>Confirm & Reconcile in Notion</span>
+                            </button>
+
+                            <a href="#" target="_blank" class="btn btn-glass" id="btnOpenNotionDirect">
+                                <i data-lucide="external-link"></i>
+                                <span>Open Side Peek in Notion</span>
+                            </a>
+                        </div>
+                    </div>
+
+                    <!-- Other Ranked Candidates -->
+                    <div class="candidates-container hidden" id="candidatesContainer">
+                        <h4 class="candidates-title">Other Possible Candidates</h4>
+                        <div class="candidates-list" id="candidatesList">
+                            <!-- Populated dynamically via JS -->
+                        </div>
+                    </div>
+
+                    <!-- Success State Card -->
+                    <div class="success-card hidden" id="successCard">
+                        <div class="success-icon">
+                            <i data-lucide="check-circle"></i>
+                        </div>
+                        <h3>Successfully Reconciled!</h3>
+                        <p id="successDesc">Voucher photo attached to side peek & PRCHI marked True.</p>
+                        <div class="success-links">
+                            <a href="#" target="_blank" class="btn btn-glass" id="btnSuccessNotionLink">
+                                <i data-lucide="external-link"></i>
+                                <span>View Side Peek in Notion</span>
+                            </a>
+                            <button class="btn btn-primary" id="btnScanNext">
+                                <i data-lucide="plus"></i>
+                                <span>Scan Next Prchi</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Mobile QR Modal -->
+    <div class="modal-overlay hidden" id="qrModal">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3>Open on Mobile Phone</h3>
+                <button class="btn-close" id="btnCloseQrModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>Scan this QR code with your phone camera to snap photos directly into Notion:</p>
+                <div class="qr-container">
+                    <img id="qrImage" alt="Mobile QR Code" class="qr-code-img">
+                </div>
+                <div class="qr-url-box">
+                    <span id="qrUrlText">Loading...</span>
+                    <button class="btn btn-icon-sm" id="btnCopyUrl" title="Copy URL">
+                        <i data-lucide="copy"></i>
+                    </button>
+                </div>
+                <p class="modal-tip">💡 Ensure both your computer and phone are connected to the same Wi-Fi network.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Records Drawer Modal -->
+    <div class="modal-overlay hidden" id="recordsModal">
+        <div class="modal-card modal-large">
+            <div class="modal-header">
+                <h3>Pending Records in Database (PRCHI: False)</h3>
+                <button class="btn-close" id="btnCloseRecordsModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="search-bar">
+                    <i data-lucide="search"></i>
+                    <input type="text" id="recordSearchInput" placeholder="Filter by customer, site, price, date..." class="search-input">
+                </div>
+                <div class="records-table-wrapper">
+                    <table class="records-table">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Customer Name</th>
+                                <th>Site / Title</th>
+                                <th>Price (₹)</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="recordsTableBody">
+                            <!-- Loaded via JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- App JavaScript -->
+    <script src="/static/js/app.js"></script>
+    <script>
+        lucide.createIcons();
+    </script>
+</body>
+</html>
